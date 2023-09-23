@@ -79,6 +79,7 @@ public final class ChineseName extends JavaPlugin implements ChineseNameApi, Lis
                 this.getNameService().checkNameValid(chName);
             } catch (Exception e) {
                 player.sendMessage(Component.text(e.getMessage()).color(NamedTextColor.DARK_RED));
+                return;
             }
 
             // 检查名字是否被使用
