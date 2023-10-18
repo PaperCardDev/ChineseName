@@ -6,6 +6,7 @@ import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.command.CommandSender;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -21,10 +22,17 @@ public final class ChineseName extends JavaPlugin implements ChineseNameApi, Lis
     private final @NotNull NameServiceImpl nameService;
     private final @NotNull ApplicationServiceImpl applicationService;
 
+    private final @NotNull TextComponent prefix;
+
     public ChineseName() {
         this.taskScheduler = UniversalScheduler.getScheduler(this);
         this.nameService = new NameServiceImpl(this);
         this.applicationService = new ApplicationServiceImpl(this);
+        this.prefix = Component.text()
+                .append(Component.text("[").color(NamedTextColor.LIGHT_PURPLE))
+                .append(Component.text("中文名").color(NamedTextColor.AQUA))
+                .append(Component.text("]").color(NamedTextColor.LIGHT_PURPLE))
+                .build();
     }
 
     @Override
@@ -148,4 +156,41 @@ public final class ChineseName extends JavaPlugin implements ChineseNameApi, Lis
     @NotNull TaskScheduler getTaskScheduler() {
         return this.taskScheduler;
     }
+
+    void sendError(@NotNull CommandSender sender, @NotNull String error) {
+        sender.sendMessage(Component.text()
+                .append(this.prefix)
+                .appendSpace()
+                .append(Component.text(error).color(NamedTextColor.RED))
+                .build()
+        );
+    }
+
+    void sendWarning(@NotNull CommandSender sender, @NotNull String warning) {
+        sender.sendMessage(Component.text()
+                .append(this.prefix)
+                .appendSpace()
+                .append(Component.text(warning).color(NamedTextColor.YELLOW))
+                .build()
+        );
+    }
+
+    void sendInfo(@NotNull CommandSender sender, @NotNull String info) {
+        sender.sendMessage(Component.text()
+                .append(this.prefix)
+                .appendSpace()
+                .append(Component.text(info).color(NamedTextColor.GREEN))
+                .build()
+        );
+    }
+
+    void sendInfo(@NotNull CommandSender sender, @NotNull TextComponent info) {
+        sender.sendMessage(Component.text()
+                .append(this.prefix)
+                .appendSpace()
+                .append(info)
+                .build()
+        );
+    }
+
 }

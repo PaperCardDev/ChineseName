@@ -33,7 +33,6 @@ public interface ChineseNameApi {
         boolean addOrUpdateByUuid(@NotNull NameInfo info) throws Exception;
 
         // 根据UUID进行查询
-        @SuppressWarnings("unused")
         @Nullable NameInfo queryByUuid(@NotNull UUID uuid) throws Exception;
 
         @Nullable NameInfo queryByName(@NotNull String name) throws Exception;
