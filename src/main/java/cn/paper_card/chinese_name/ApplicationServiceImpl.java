@@ -1,121 +1,194 @@
 package cn.paper_card.chinese_name;
 
-import cn.paper_card.database.DatabaseApi;
-import org.bukkit.plugin.Plugin;
+import cn.paper_card.chinese_name.api.ApplicationInfo;
+import cn.paper_card.chinese_name.api.ApplicationService;
+import cn.paper_card.chinese_name.api.NameInfo;
+import cn.paper_card.chinese_name.api.exception.InvalidNameException;
+import cn.paper_card.chinese_name.api.exception.NameAppliedException;
+import cn.paper_card.chinese_name.api.exception.NameRegisteredException;
+import cn.paper_card.database.api.DatabaseApi;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-class ApplicationServiceImpl implements ChineseNameApi.ApplicationService {
+class ApplicationServiceImpl implements ApplicationService {
+
+    interface NameChecker {
+        @Nullable NameInfo queryByName(@NotNull String name) throws SQLException;
+    }
+
+
+    private final @NotNull DatabaseApi.MySqlConnection mySqlConnection;
 
     private Connection connection = null;
     private ApplicationTable table = null;
 
-    private final @NotNull ChineseName plugin;
+    private final @NotNull NameChecker nameChecker;
 
-    ApplicationServiceImpl(@NotNull ChineseName plugin) {
-        this.plugin = plugin;
+    private final @NotNull Pattern compile;
+
+
+    ApplicationServiceImpl(@NotNull DatabaseApi.MySqlConnection mySqlConnection, @NotNull NameChecker nameChecker) {
+        this.mySqlConnection = mySqlConnection;
+        this.nameChecker = nameChecker;
+
+        this.compile = Pattern.compile("[\\u4e00-\\u9fa5]{2,4}");
     }
 
-    private @NotNull Connection getConnection() throws Exception {
-        if (this.connection == null) {
-            final Plugin p = this.plugin.getServer().getPluginManager().getPlugin("Database");
-            if (p instanceof DatabaseApi api) {
-                this.connection = api.connectUnimportant().getConnection();
-            } else throw new Exception("Database插件未安装！");
-        }
-        return this.connection;
-    }
+    private @NotNull ApplicationTable getTable() throws SQLException {
+        final Connection newCon = this.mySqlConnection.getRawConnection();
 
-    private @NotNull ApplicationTable getTable() throws Exception {
-        if (this.table == null) {
-            this.table = new ApplicationTable(this.getConnection());
-        }
+        if (this.connection != null && this.connection == newCon) return this.table;
+
+        if (this.table != null) this.table.close();
+        this.table = new ApplicationTable(newCon);
+        this.connection = newCon;
         return this.table;
     }
 
-    void destroy() {
-        synchronized (this) {
-            if (this.table != null) {
-                try {
-                    this.table.close();
-                } catch (SQLException e) {
-                    plugin.getLogger().severe(e.toString());
-                    e.printStackTrace();
-                }
-                this.table = null;
-            }
+    void destroy() throws SQLException {
+        synchronized (this.mySqlConnection) {
+            final ApplicationTable t = this.table;
 
-            if (this.connection != null) {
-                try {
-                    this.connection.close();
-                } catch (SQLException e) {
-                    plugin.getLogger().severe(e.toString());
-                    e.printStackTrace();
-                }
+            if (t == null) {
                 this.connection = null;
+                return;
+            }
+
+            this.connection = null;
+            this.table = null;
+
+            t.close();
+        }
+    }
+
+    @Override
+    public void checkNameValid(@NotNull String name) throws InvalidNameException {
+        final Matcher matcher = this.compile.matcher(name);
+        if (!matcher.matches())
+            throw new InvalidNameException("不正确的中文名：%s，字数只能为2~4个字，只能为汉字".formatted(name));
+    }
+
+    @Override
+    public int addOrUpdateByUuid(@NotNull ApplicationInfo info) throws NameRegisteredException, NameAppliedException, InvalidNameException, SQLException {
+
+        // 检查名字
+        this.checkNameValid(info.name());
+
+        synchronized (this.mySqlConnection) {
+            try {
+                final ApplicationTable t = this.getTable();
+
+                // 查询是否已经被注册
+                final NameInfo nameInfo = this.nameChecker.queryByName(info.name());
+                if (nameInfo != null)
+                    throw new NameRegisteredException(nameInfo, "中文名 %s 已经被注册！".formatted(info.name()));
+
+                // 查询是否已经被申请
+                final ApplicationInfo info1 = t.queryByName(info.name());
+                this.mySqlConnection.setLastUseTime();
+
+                if (info1 != null)
+                    throw new NameAppliedException(info1, "中文名 %s 已经被申请！".formatted(info1.name()));
+
+                // 更新
+                final int updated = t.updateByUuid(info.uuid(), info.name(), info.time());
+                this.mySqlConnection.setLastUseTime();
+
+                // 插入
+                if (updated == 0) {
+                    final int id = t.insert(info.uuid(), info.name(), info.time());
+                    this.mySqlConnection.setLastUseTime();
+                    return id;
+                }
+
+                if (updated == 1) return 0;
+
+                throw new RuntimeException("更新了%d条数据！".formatted(updated));
+            } catch (SQLException e) {
+                try {
+                    this.mySqlConnection.handleException(e);
+                } catch (SQLException ignored) {
+                }
+                throw e;
             }
         }
-
     }
 
     @Override
-    public int addOrUpdateByUuid(@NotNull ChineseNameApi.ApplicationInfo info) throws Exception {
-        synchronized (this) {
-            final ApplicationTable t = this.getTable();
-            final int updated = t.updateByUuid(info.uuid(), info.name(), info.time());
-            if (updated == 1) return 0;
-            if (updated == 0) {
-                final List<Integer> ids = t.insert(info.uuid(), info.name(), info.time());
-                final int size = ids.size();
-                if (size == 1) return ids.get(0);
-                if (size == 0) return -1;
-                throw new Exception("插入数据生成了%d个ID！".formatted(size));
+    public @Nullable ApplicationInfo queryByName(@NotNull String name) throws SQLException {
+        synchronized (this.mySqlConnection) {
+
+            try {
+                final ApplicationTable t = this.getTable();
+
+                final ApplicationInfo info = t.queryByName(name);
+                this.mySqlConnection.setLastUseTime();
+
+                return info;
+            } catch (SQLException e) {
+                try {
+                    this.mySqlConnection.handleException(e);
+                } catch (SQLException ignored) {
+                }
+                throw e;
             }
-            throw new Exception("根据一个UUID更新了%d条数据！".formatted(updated));
         }
     }
 
     @Override
-    public @Nullable ChineseNameApi.ApplicationInfo queryByName(@NotNull String name) throws Exception {
-        synchronized (this) {
-            final ApplicationTable t = this.getTable();
-            final List<ChineseNameApi.ApplicationInfo> list = t.queryByName(name);
-            final int size = list.size();
-            if (size == 0) return null;
-            if (size == 1) return list.get(0);
-            throw new Exception("根据一个中文名[%s]查询到了%d条数据！".formatted(name, size));
+    public @NotNull List<ApplicationInfo> queryWithPage(int limit, int offset) throws SQLException {
+        synchronized (this.mySqlConnection) {
+            try {
+                final List<ApplicationInfo> list;
+
+                final ApplicationTable t = this.getTable();
+
+                list = t.queryWithPage(limit, offset);
+                this.mySqlConnection.setLastUseTime();
+
+                return list;
+            } catch (SQLException e) {
+                try {
+                    this.mySqlConnection.handleException(e);
+                } catch (SQLException ignored) {
+                }
+
+                throw e;
+            }
         }
     }
 
     @Override
-    public @NotNull List<ChineseNameApi.ApplicationInfo> queryWithLimit(int limit) throws Exception {
-        synchronized (this) {
-            final ApplicationTable t = this.getTable();
-            return t.queryWithLimit(limit);
-        }
-    }
+    public @Nullable ApplicationInfo takeById(int id) throws SQLException {
+        synchronized (this.mySqlConnection) {
 
-    @Override
-    public @Nullable ChineseNameApi.ApplicationInfo takeById(int id) throws Exception {
-        synchronized (this) {
-            final ApplicationTable t = this.getTable();
-            final List<ChineseNameApi.ApplicationInfo> list = t.queryById(id);
-            final int size = list.size();
-            if (size == 0) return null;
-            if (size == 1) {
-                final ChineseNameApi.ApplicationInfo applicationInfo = list.get(0);
+            try {
+                final ApplicationTable t = this.getTable();
 
-                // 删除
+                final ApplicationInfo info = t.queryById(id);
+                this.mySqlConnection.setLastUseTime();
+
+                if (info == null) return null;
+
                 final int deleted = t.deleteById(id);
-                if (deleted != 1) throw new Exception("根据一个ID删除了%d条数据！".formatted(deleted));
 
-                return applicationInfo;
+                if (deleted != 1) throw new RuntimeException("删除了%d条数据！".formatted(deleted));
+
+                return info;
+
+            } catch (SQLException e) {
+                try {
+                    this.mySqlConnection.handleException(e);
+                } catch (SQLException ignored) {
+                }
+                throw e;
             }
-            throw new Exception("根据一个申请ID查询到了%d条数据！".formatted(size));
         }
     }
 }

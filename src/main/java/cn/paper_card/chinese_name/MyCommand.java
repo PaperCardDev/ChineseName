@@ -1,19 +1,27 @@
 package cn.paper_card.chinese_name;
 
+import cn.paper_card.chinese_name.api.ApplicationInfo;
+import cn.paper_card.chinese_name.api.NameInfo;
+import cn.paper_card.chinese_name.api.exception.InvalidNameException;
+import cn.paper_card.chinese_name.api.exception.NameAppliedException;
+import cn.paper_card.chinese_name.api.exception.NameRegisteredException;
 import cn.paper_card.mc_command.TheMcCommand;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Player;
 import org.bukkit.permissions.Permission;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.sql.SQLException;
 import java.text.SimpleDateFormat;
 import java.util.LinkedList;
 import java.util.List;
@@ -22,14 +30,20 @@ import java.util.UUID;
 
 class MyCommand extends TheMcCommand.HasSub {
 
-    private final @NotNull ChineseName plugin;
+    private final @NotNull ThePlugin plugin;
     private final @NotNull Permission permission;
 
 
-    MyCommand(@NotNull ChineseName plugin) {
+    MyCommand(@NotNull ThePlugin plugin) {
         super("ch-name");
         this.plugin = plugin;
         this.permission = Objects.requireNonNull(plugin.getServer().getPluginManager().getPermission("ch-name.command"));
+
+
+        final PluginCommand command = plugin.getCommand(this.getLabel());
+        assert command != null;
+        command.setExecutor(this);
+        command.setTabCompleter(this);
 
         this.addSubCommand(new Set());
         this.addSubCommand(new App());
@@ -65,7 +79,7 @@ class MyCommand extends TheMcCommand.HasSub {
 
         protected Set() {
             super("set");
-            this.permission = plugin.addPermission(MyCommand.this.permission.getName() + ".set");
+            this.permission = plugin.addPermission(MyCommand.this.permission.getName() + "." + this.getLabel());
         }
 
         @Override
@@ -98,28 +112,30 @@ class MyCommand extends TheMcCommand.HasSub {
 
             plugin.getTaskScheduler().runTaskAsynchronously(() -> {
 
-                boolean added;
+                final boolean added;
                 try {
-                    added = plugin.getNameService().addOrUpdateByUuid(new ChineseNameApi.NameInfo(
+                    added = plugin.getChineseNameApi().getNameService().addOrUpdateByUuid(new NameInfo(
                             uuid,
                             argNewName,
                             System.currentTimeMillis(),
                             true
                     ));
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    plugin.sendError(commandSender, e.toString());
+                } catch (SQLException e) {
+                    plugin.handleException("set command -> name service -> add or update by uuid", e);
+                    plugin.sendException(commandSender, e);
+                    return;
+                } catch (NameRegisteredException e) {
+                    plugin.sendWarning(commandSender, e.getMessage());
                     return;
                 }
-
 
                 final OfflinePlayer offlinePlayer = plugin.getServer().getOfflinePlayer(uuid);
                 String playerName = offlinePlayer.getName();
                 if (playerName == null) playerName = offlinePlayer.getUniqueId().toString();
 
-                commandSender.sendMessage(Component.text("%s成功，已将玩家 [%s] 的中文名设置为: %s".formatted(
+                plugin.sendInfo(commandSender, "%s成功，已将玩家 [%s] 的中文名设置为: %s".formatted(
                         added ? "添加" : "更新", playerName, argNewName
-                )));
+                ));
 
                 // 如果玩家在线通知玩家
                 final Player player = offlinePlayer.getPlayer();
@@ -174,7 +190,7 @@ class MyCommand extends TheMcCommand.HasSub {
 
         protected AppList() {
             super("app-list");
-            this.permission = plugin.addPermission(MyCommand.this.permission.getName() + ".app-list");
+            this.permission = plugin.addPermission(MyCommand.this.permission.getName() + "." + this.getLabel());
         }
 
         @Override
@@ -185,34 +201,53 @@ class MyCommand extends TheMcCommand.HasSub {
         @Override
         public boolean onCommand(@NotNull CommandSender commandSender, @NotNull Command command, @NotNull String s, @NotNull String[] strings) {
 
+            final int pageSize = 4;
+            final String argPage = strings.length > 0 ? strings[0] : null;
+
+            final int pageNo;
+            if (argPage == null) {
+                pageNo = 1;
+            } else {
+                try {
+                    pageNo = Integer.parseInt(argPage);
+                } catch (NumberFormatException e) {
+                    plugin.sendError(commandSender, "%s 不是正确的页码".formatted(argPage));
+                    return true;
+                }
+            }
+
             plugin.getTaskScheduler().runTaskAsynchronously(() -> {
-                final List<ChineseNameApi.ApplicationInfo> list;
+
+
+                final List<ApplicationInfo> list;
 
                 try {
-                    list = plugin.getApplicationService().queryWithLimit(4);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    commandSender.sendMessage(Component.text(e.toString()).color(NamedTextColor.DARK_RED));
+                    list = plugin.getChineseNameApi().getApplicationService().queryWithPage(pageSize, (pageNo - 1) * pageSize);
+                } catch (SQLException e) {
+                    plugin.handleException("app-list command -> application service -> query with page", e);
+                    plugin.sendException(commandSender, e);
                     return;
                 }
 
                 final int size = list.size();
 
                 final TextComponent.Builder builder = Component.text();
-                builder.append(Component.text("---- 中文名申请列表 ----"));
-                builder.appendNewline();
+
+                builder.append(Component.text("==== 中文名申请列表 | 第%d页 ====".formatted(pageNo)).color(NamedTextColor.GREEN));
 
 
                 if (size == 0) {
-                    builder.append(Component.text("当前没有任何中文名申请").color(NamedTextColor.GRAY));
                     builder.appendNewline();
+                    builder.append(Component.text("当前页没有任何中文名申请").color(NamedTextColor.GRAY));
                 } else {
+
                     final SimpleDateFormat format = new SimpleDateFormat("MM月dd日，HH:mm");
 
-                    builder.append(Component.text("ID | 中文名 | 原名 | 时间 | 操作").color(NamedTextColor.GRAY));
                     builder.appendNewline();
+                    builder.append(Component.text("ID | 中文名 | 原名 | 时间 | 操作").color(NamedTextColor.GRAY));
 
-                    for (ChineseNameApi.ApplicationInfo info : list) {
+                    for (final var info : list) {
+                        builder.appendNewline();
 
                         builder.append(Component.text(info.id()));
                         builder.append(Component.text(" | "));
@@ -240,15 +275,27 @@ class MyCommand extends TheMcCommand.HasSub {
                                 .color(NamedTextColor.GRAY).decorate(TextDecoration.UNDERLINED)
                                 .clickEvent(ClickEvent.runCommand("/ch-name reject %d".formatted(info.id())))
                         );
-
-                        builder.appendNewline();
                     }
                 }
-                builder.append(Component.text("========").color(NamedTextColor.GREEN));
+
+                final boolean noNext = size < pageSize;
+                final boolean hasPre = pageNo > 1;
+
+                builder.appendNewline();
+                builder.append(Component.text("[上一页]")
+                        .color(NamedTextColor.GRAY).decorate(TextDecoration.UNDERLINED)
+                        .clickEvent(hasPre ? ClickEvent.runCommand("ch-name app-list %d".formatted(pageNo - 1)) : null)
+                        .hoverEvent(HoverEvent.showText(Component.text(hasPre ? "点击上一页" : "没有上一页啦")))
+                );
+                builder.appendSpace();
+                builder.append(Component.text("[下一页]")
+                        .color(NamedTextColor.GRAY).decorate(TextDecoration.UNDERLINED)
+                        .clickEvent(noNext ? null : ClickEvent.runCommand("ch-name app-list %d".formatted(pageNo + 1)))
+                        .hoverEvent(HoverEvent.showText(Component.text(noNext ? "没有下一页啦" : "点击下一页")))
+                );
 
                 plugin.sendInfo(commandSender, builder.build());
             });
-
 
             return true;
         }
@@ -265,7 +312,7 @@ class MyCommand extends TheMcCommand.HasSub {
 
         protected Accept() {
             super("accept");
-            this.permission = plugin.addPermission(MyCommand.this.permission.getName() + ".accept");
+            this.permission = plugin.addPermission(MyCommand.this.permission.getName() + "." + this.getLabel());
         }
 
         @Override
@@ -293,33 +340,38 @@ class MyCommand extends TheMcCommand.HasSub {
             }
 
             plugin.getTaskScheduler().runTaskAsynchronously(() -> {
-                final ChineseNameApi.ApplicationInfo info;
+                final ApplicationInfo info;
+
 
                 try {
-                    info = plugin.getApplicationService().takeById(id);
-                } catch (Exception e) {
-                    plugin.sendError(commandSender, e.toString());
-                    e.printStackTrace();
+                    info = plugin.getChineseNameApi().getApplicationService().takeById(id);
+                } catch (SQLException e) {
+                    plugin.handleException("accept command -> application service -> take by id", e);
+                    plugin.sendException(commandSender, e);
                     return;
                 }
 
                 if (info == null) {
-                    plugin.sendError(commandSender, "以%d为ID的申请不存在！".formatted(id));
+                    plugin.sendWarning(commandSender, "以%d为ID的申请不存在！".formatted(id));
                     return;
                 }
 
                 boolean added;
 
+
                 try {
-                    added = plugin.getNameService().addOrUpdateByUuid(new ChineseNameApi.NameInfo(
+                    added = plugin.getChineseNameApi().getNameService().addOrUpdateByUuid(new NameInfo(
                             info.uuid(),
                             info.name(),
                             System.currentTimeMillis(),
                             true
                     ));
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    plugin.sendError(commandSender, e.toString());
+                } catch (SQLException e) {
+                    plugin.handleException("accept command -> name service -> add or update by uuid", e);
+                    plugin.sendException(commandSender, e);
+                    return;
+                } catch (NameRegisteredException e) {
+                    plugin.sendWarning(commandSender, e.getMessage());
                     return;
                 }
 
@@ -332,19 +384,15 @@ class MyCommand extends TheMcCommand.HasSub {
                         name, info.name()
                 ));
 
+                // 广播
+                final TextComponent.Builder append = Component.text()
+                        .append(Component.text("管理员 [").color(NamedTextColor.GREEN))
+                        .append(Component.text(commandSender.getName()).color(NamedTextColor.DARK_RED))
+                        .append(Component.text("] 已同意中文名申请 [").color(NamedTextColor.GREEN))
+                        .append(Component.text(info.name()).color(NamedTextColor.LIGHT_PURPLE))
+                        .append(Component.text("]，下次连接服务器就生效啦~").color(NamedTextColor.GREEN));
 
-                // 如果玩家在线，通知玩家
-                final Player player = offlinePlayer.getPlayer();
-                if (player != null && player.isOnline()) {
-                    final TextComponent.Builder append = Component.text()
-                            .append(Component.text("管理员 [").color(NamedTextColor.GREEN))
-                            .append(Component.text(commandSender.getName()).color(NamedTextColor.DARK_RED))
-                            .append(Component.text("] 已同意你的中文名申请 [").color(NamedTextColor.GREEN))
-                            .append(Component.text(info.name()).color(NamedTextColor.LIGHT_PURPLE))
-                            .append(Component.text("]，下次连接服务器就生效啦~").color(NamedTextColor.GREEN));
-
-                    plugin.sendInfo(player, append.build());
-                }
+                plugin.broadcast(append.build());
             });
 
             return true;
@@ -369,7 +417,7 @@ class MyCommand extends TheMcCommand.HasSub {
 
         protected Reject() {
             super("reject");
-            this.permission = plugin.addPermission(MyCommand.this.permission.getName() + ".reject");
+            this.permission = plugin.addPermission(MyCommand.this.permission.getName() + "." + this.getLabel());
         }
 
         @Override
@@ -398,22 +446,22 @@ class MyCommand extends TheMcCommand.HasSub {
 
 
             plugin.getTaskScheduler().runTaskAsynchronously(() -> {
-                final ChineseNameApi.ApplicationInfo info;
+                final ApplicationInfo info;
 
                 // 取出
+
                 try {
-                    info = plugin.getApplicationService().takeById(id);
-                } catch (Exception e) {
-                    plugin.sendError(commandSender, e.toString());
-                    e.printStackTrace();
+                    info = plugin.getChineseNameApi().getApplicationService().takeById(id);
+                } catch (SQLException e) {
+                    plugin.handleException("reject command -> application service -> take by id", e);
+                    plugin.sendException(commandSender, e);
                     return;
                 }
 
                 if (info == null) {
-                    plugin.sendError(commandSender, "以%d为ID的申请不存在！".formatted(id));
+                    plugin.sendWarning(commandSender, "以%d为ID的申请不存在！".formatted(id));
                     return;
                 }
-
 
                 final OfflinePlayer offlinePlayer = plugin.getServer().getOfflinePlayer(info.uuid());
                 String name = offlinePlayer.getName();
@@ -424,19 +472,15 @@ class MyCommand extends TheMcCommand.HasSub {
                         name, info.name()
                 ));
 
-                // 如果玩家在线，通知玩家
-                final Player player = offlinePlayer.getPlayer();
-                if (player != null && player.isOnline()) {
-                    final TextComponent.Builder append = Component.text()
-                            .append(Component.text("管理员 [").color(NamedTextColor.GREEN))
-                            .append(Component.text(commandSender.getName()).color(NamedTextColor.DARK_RED))
-                            .append(Component.text("] 拒绝了你的中文名申请 [").color(NamedTextColor.GREEN))
-                            .append(Component.text(info.name()).color(NamedTextColor.LIGHT_PURPLE))
-                            .append(Component.text("]，可以换个别的名字重新申请~").color(NamedTextColor.GREEN));
+                // 广播
+                final TextComponent.Builder append = Component.text()
+                        .append(Component.text("管理员 [").color(NamedTextColor.GREEN))
+                        .append(Component.text(commandSender.getName()).color(NamedTextColor.DARK_RED))
+                        .append(Component.text("] 拒绝了中文名申请 [").color(NamedTextColor.GREEN))
+                        .append(Component.text(info.name()).color(NamedTextColor.LIGHT_PURPLE))
+                        .append(Component.text("]，可以换个别的名字重新申请~").color(NamedTextColor.GREEN));
 
-                    plugin.sendInfo(player, append.build());
-
-                }
+                plugin.broadcast(append.build());
             });
 
 
@@ -491,60 +535,23 @@ class MyCommand extends TheMcCommand.HasSub {
 
             plugin.getTaskScheduler().runTaskAsynchronously(() -> {
 
-                // 检查中文名是否合法
-                try {
-                    plugin.getNameService().checkNameValid(argNewName);
-                } catch (Exception e) {
-                    plugin.sendWarning(commandSender, e.getMessage());
-                    return;
-                }
-
-                // 检查名字是否被使用
-                final ChineseNameApi.NameInfo nameInfo;
-                try {
-                    nameInfo = plugin.getNameService().queryByName(argNewName);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    plugin.sendError(commandSender, e.toString());
-                    return;
-                }
-
-                if (nameInfo != null) {
-                    plugin.sendWarning(commandSender, """
-                            该中文名 [%s] 已被注册使用，请申请其它的名字~""".formatted(argNewName));
-                    return;
-                }
-
-                // 检查是否已经在申请了
-                final ChineseNameApi.ApplicationInfo applicationInfo;
-
-                try {
-                    applicationInfo = plugin.getApplicationService().queryByName(argNewName);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    plugin.sendError(commandSender, e.toString());
-                    return;
-                }
-
-                if (applicationInfo != null) {
-                    plugin.sendWarning(commandSender, """
-                            该中文名 [%s] 已被申请，请申请其它的名字~"""
-                            .formatted(argNewName));
-                    return;
-                }
 
                 int id;
 
+
                 try {
-                    id = plugin.getApplicationService().addOrUpdateByUuid(new ChineseNameApi.ApplicationInfo(
+                    id = plugin.getChineseNameApi().getApplicationService().addOrUpdateByUuid(new ApplicationInfo(
                             0,
                             player.getUniqueId(),
                             argNewName,
                             System.currentTimeMillis()
                     ));
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    plugin.sendError(player, e.toString());
+                } catch (NameRegisteredException | NameAppliedException | InvalidNameException e) {
+                    plugin.sendWarning(commandSender, e.getMessage());
+                    return;
+                } catch (SQLException e) {
+                    plugin.handleException("app command -> application service -> add or update by uuid", e);
+                    plugin.sendException(commandSender, e);
                     return;
                 }
 
@@ -599,28 +606,29 @@ class MyCommand extends TheMcCommand.HasSub {
             }
 
             plugin.getTaskScheduler().runTaskAsynchronously(() -> {
-                final ChineseNameApi.NameInfo nameInfo;
+                final NameInfo nameInfo;
 
                 try {
-                    nameInfo = plugin.getNameService().queryByUuid(player.getUniqueId());
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    plugin.sendError(commandSender, e.toString());
+                    nameInfo = plugin.getChineseNameApi().getNameService().queryByUuid(player.getUniqueId());
+                } catch (SQLException e) {
+                    plugin.handleException("use-on-off command -> name service -> query by uuid", e);
+                    plugin.sendException(commandSender, e);
                     return;
                 }
+
 
                 if (nameInfo == null) {
-                    plugin.sendWarning(commandSender, "你没有注册中文名");
+                    plugin.sendWarning(commandSender, "你还没有注册中文名");
                     return;
                 }
 
-                if (nameInfo.inUse() == this.isOn) {
-                    final String status = nameInfo.inUse() ? "启用" : "禁用";
+                if (nameInfo.enable() == this.isOn) {
+                    final String status = nameInfo.enable() ? "启用" : "禁用";
                     plugin.sendWarning(commandSender, "你的中文名已经是 [" + status + "] 状态");
                     return;
                 }
 
-                final ChineseNameApi.NameInfo newInfo = new ChineseNameApi.NameInfo(
+                final NameInfo newInfo = new NameInfo(
                         player.getUniqueId(),
                         nameInfo.name(),
                         System.currentTimeMillis(),
@@ -629,11 +637,12 @@ class MyCommand extends TheMcCommand.HasSub {
 
                 final boolean added;
 
+
                 try {
-                    added = plugin.getNameService().addOrUpdateByUuid(newInfo);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    plugin.sendError(commandSender, e.toString());
+                    added = plugin.getChineseNameApi().getNameService().addOrUpdateByUuid(newInfo);
+                } catch (SQLException | NameRegisteredException e) {
+                    plugin.handleException("use-on-off command -> name service -> add or update by uuid", e);
+                    plugin.sendException(commandSender, e);
                     return;
                 }
 
@@ -668,7 +677,9 @@ class MyCommand extends TheMcCommand.HasSub {
         @Override
         public boolean onCommand(@NotNull CommandSender commandSender, @NotNull Command command, @NotNull String s, @NotNull String[] strings) {
 
-            final String link = "https://docs.qq.com/doc/DV2l0SlJrbmRldFhH";
+            // todo 不应该写死
+            final String link = "https://pan90.gitee.io/docs/ch-name.html";
+
             plugin.sendInfo(commandSender, Component.text()
                     .append(Component.text("点击打开帮助文档：").color(NamedTextColor.GREEN))
                     .append(Component.text(link)

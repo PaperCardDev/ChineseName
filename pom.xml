@@ -39,6 +39,28 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <filters>
+                                <filter>
+                                    <artifact>com.github.PaperCardDev:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.MF</exclude>
+                                    </excludes>
+                                </filter>
+
+                                <filter>
+                                    <artifact>org.jetbrains:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.MF</exclude>
+                                    </excludes>
+                                </filter>
+
+                                <filter>
+                                    <artifact>com.github.Anon8281:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.MF</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                         </configuration>
                     </execution>
                 </executions>
@@ -54,6 +76,11 @@
 
     <repositories>
         <repository>
+            <id>jitpack.io</id>
+            <url>https://www.jitpack.io</url>
+        </repository>
+
+        <repository>
             <id>papermc-repo</id>
             <url>https://repo.papermc.io/repository/maven-public/</url>
         </repository>
@@ -63,10 +90,7 @@
             <url>https://oss.sonatype.org/content/groups/public/</url>
         </repository>
 
-        <repository>
-            <id>jitpack.io</id>
-            <url>https://jitpack.io</url>
-        </repository>
+
     </repositories>
 
     <dependencies>
@@ -78,15 +102,21 @@
         </dependency>
 
         <dependency>
-            <groupId>cn.paper_card</groupId>
-            <artifactId>Database</artifactId>
+            <groupId>com.github.PaperCardDev</groupId>
+            <artifactId>chinese-name-api</artifactId>
+            <version>1.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.PaperCardDev</groupId>
+            <artifactId>database-api</artifactId>
             <version>1.0</version>
             <scope>provided</scope>
         </dependency>
 
         <dependency>
-            <groupId>cn.paper_card</groupId>
-            <artifactId>McCommand</artifactId>
+            <groupId>com.github.PaperCardDev</groupId>
+            <artifactId>mc-command</artifactId>
             <version>1.0</version>
         </dependency>
 

@@ -1,6 +1,6 @@
 name: ChineseName
 version: '${project.version}'
-main: cn.paper_card.chinese_name.ChineseName
+main: cn.paper_card.chinese_name.ThePlugin
 api-version: '1.20'
 author: Paper99
 folia-supported: true

@@ -1,89 +1,115 @@
 package cn.paper_card.chinese_name;
 
-import cn.paper_card.database.DatabaseConnection;
+import cn.paper_card.chinese_name.api.ApplicationInfo;
+import cn.paper_card.database.api.Util;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.UUID;
 
 class ApplicationTable {
 
-    private static final String TABLE_NAME = "chinese_name_application";
+    private static final String NAME = "chinese_name_app";
 
-    private final PreparedStatement statementQueryById;
+    private PreparedStatement statementQueryById = null;
 
-    private final PreparedStatement statementQueryByName;
+    private PreparedStatement statementQueryByName = null;
 
-    private final PreparedStatement statementInsert;
+    private PreparedStatement statementInsert = null;
 
-    private final PreparedStatement statementUpdateByUuid;
+    private PreparedStatement statementUpdateByUuid = null;
 
-    private final PreparedStatement statementDeleteById;
+    private PreparedStatement statementDeleteById = null;
 
-    private final PreparedStatement statementQueryWithLimit;
+    private PreparedStatement statementQueryWithPage = null;
+
+    private final @NotNull Connection connection;
 
     ApplicationTable(@NotNull Connection connection) throws SQLException {
-        this.createTable(connection);
-
-        try {
-            this.statementQueryById = connection.prepareStatement
-                    ("SELECT id, uid1, uid2, name, time FROM %s WHERE id=?".formatted(TABLE_NAME));
-
-            this.statementQueryByName = connection.prepareStatement
-                    ("SELECT id, uid1, uid2, name, time FROM %s WHERE name=?".formatted(TABLE_NAME));
-
-            this.statementQueryWithLimit = connection.prepareStatement
-                    ("SELECT id, uid1, uid2, name, time FROM %s LIMIT ?".formatted(TABLE_NAME));
-
-
-            this.statementInsert = connection.prepareStatement
-                    ("INSERT INTO %s (uid1, uid2, name, time) VALUES (?, ?, ?, ?)".formatted(TABLE_NAME));
-
-            this.statementUpdateByUuid = connection.prepareStatement
-                    ("UPDATE %s SET name=?,time=? WHERE uid1=? AND uid2=?".formatted(TABLE_NAME));
-
-            this.statementDeleteById = connection.prepareStatement
-                    ("DELETE FROM %s WHERE id=?".formatted(TABLE_NAME));
-
-
-        } catch (SQLException e) {
-            try {
-                this.close();
-            } catch (SQLException ignored) {
-            }
-            throw e;
-        }
+        this.connection = connection;
+        this.createTable();
     }
 
-    private void createTable(@NotNull Connection connection) throws SQLException {
+    private void createTable() throws SQLException {
 
-        DatabaseConnection.createTable(connection, """
+        Util.executeSQL(this.connection, """
                 CREATE TABLE IF NOT EXISTS %s (
-                    id  INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                    uid1    INTEGER NOT NULL,
-                    uid2    INTEGER NOT NULL,
-                    name    VARCHAR(24) NOT NULL,
-                    time    INTEGER NOT NULL
-                )""".formatted(TABLE_NAME));
+                    id  INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
+                    uid1    BIGINT NOT NULL,
+                    uid2    BIGINT NOT NULL,
+                    name    VARCHAR(64) NOT NULL UNIQUE,
+                    time    BIGINT NOT NULL
+                )""".formatted(NAME));
     }
 
     void close() throws SQLException {
-        DatabaseConnection.closeAllStatements(this.getClass(), this);
+        Util.closeAllStatements(this.getClass(), this);
     }
 
-    private @NotNull List<Integer> parseIds(@NotNull ResultSet resultSet) throws SQLException {
+    private @NotNull PreparedStatement getStatementInsert() throws SQLException {
+        if (this.statementInsert == null) {
+            this.statementInsert = this.connection.prepareStatement
+                    ("INSERT INTO %s (uid1, uid2, name, time) VALUES (?, ?, ?, ?)".formatted(NAME),
+                            Statement.RETURN_GENERATED_KEYS);
+        }
+        return this.statementInsert;
+    }
 
-        final LinkedList<Integer> list = new LinkedList<>();
+    private @NotNull PreparedStatement getStatementUpdateByUuid() throws SQLException {
+        if (this.statementUpdateByUuid == null) {
+            this.statementUpdateByUuid = this.connection.prepareStatement
+                    ("UPDATE %s SET name=?,time=? WHERE uid1=? AND uid2=? LIMIT 1".formatted(NAME));
+        }
+        return this.statementUpdateByUuid;
+    }
+
+    private @NotNull PreparedStatement getStatementDeleteById() throws SQLException {
+        if (this.statementDeleteById == null) {
+            this.statementDeleteById = this.connection.prepareStatement
+                    ("DELETE FROM %s WHERE id=? LIMIT 1".formatted(NAME));
+        }
+        return this.statementDeleteById;
+    }
+
+    private @NotNull PreparedStatement getStatementQueryById() throws SQLException {
+        if (this.statementQueryById == null) {
+            this.statementQueryById = this.connection.prepareStatement
+                    ("SELECT id, uid1, uid2, name, time FROM %s WHERE id=? LIMIT 1".formatted(NAME));
+        }
+        return this.statementQueryById;
+    }
+
+    private @NotNull PreparedStatement getStatementQueryByName() throws SQLException {
+        if (this.statementQueryByName == null) {
+            this.statementQueryByName = this.connection.prepareStatement
+                    ("SELECT id, uid1, uid2, name, time FROM %s WHERE name=? LIMIT 1".formatted(NAME));
+        }
+        return this.statementQueryByName;
+    }
+
+    private @NotNull PreparedStatement getStatementQueryWithPage() throws SQLException {
+
+        if (this.statementQueryWithPage == null) {
+            this.statementQueryWithPage = this.connection.prepareStatement
+                    ("SELECT id, uid1, uid2, name, time FROM %s LIMIT ? OFFSET 0".formatted(NAME));
+        }
+
+        return this.statementQueryWithPage;
+    }
+
+    private int parseIds(@NotNull ResultSet resultSet) throws SQLException {
+
+        final int id;
         try {
-            while (resultSet.next()) {
-                final int id = resultSet.getInt(1);
-                list.add(id);
-            }
+            if (resultSet.next()) {
+                id = resultSet.getInt(1);
+            } else throw new SQLException("不应该没有数据！");
+
+            if (resultSet.next()) throw new SQLException("不应该还有数据！");
+
         } catch (SQLException e) {
             try {
                 resultSet.close();
@@ -95,26 +121,49 @@ class ApplicationTable {
 
         resultSet.close();
 
-        return list;
+        return id;
     }
 
-    @NotNull List<ChineseNameApi.ApplicationInfo> parse(@NotNull ResultSet resultSet) throws SQLException {
+    private @NotNull ApplicationInfo parseRow(@NotNull ResultSet resultSet) throws SQLException {
+        final int id = resultSet.getInt(1);
+        final long uid1 = resultSet.getLong(2);
+        final long uid2 = resultSet.getLong(3);
+        final String name = resultSet.getString(4);
+        final long time = resultSet.getLong(5);
+        return new ApplicationInfo(
+                id,
+                new UUID(uid1, uid2),
+                name,
+                time
+        );
+    }
 
-        final LinkedList<ChineseNameApi.ApplicationInfo> list = new LinkedList<>();
+    private @Nullable ApplicationInfo parseOne(@NotNull ResultSet resultSet) throws SQLException {
+
+        final ApplicationInfo info;
         try {
-            while (resultSet.next()) {
-                final int id = resultSet.getInt(1);
-                final long uid1 = resultSet.getLong(2);
-                final long uid2 = resultSet.getLong(3);
-                final String name = resultSet.getString(4);
-                final long time = resultSet.getLong(5);
-                list.add(new ChineseNameApi.ApplicationInfo(
-                        id,
-                        new UUID(uid1, uid2),
-                        name,
-                        time
-                ));
+            if (resultSet.next()) info = this.parseRow(resultSet);
+            else info = null;
+
+            if (resultSet.next()) throw new SQLException("不应该还有数据！");
+        } catch (SQLException e) {
+            try {
+                resultSet.close();
+            } catch (SQLException ignored) {
             }
+            throw e;
+        }
+
+        resultSet.close();
+
+        return info;
+    }
+
+    private @NotNull List<ApplicationInfo> parseAll(@NotNull ResultSet resultSet) throws SQLException {
+
+        final LinkedList<ApplicationInfo> list = new LinkedList<>();
+        try {
+            while (resultSet.next()) list.add(this.parseRow(resultSet));
         } catch (SQLException e) {
             try {
                 resultSet.close();
@@ -127,29 +176,8 @@ class ApplicationTable {
         return list;
     }
 
-    @NotNull List<ChineseNameApi.ApplicationInfo> queryById(int id) throws SQLException {
-        final PreparedStatement ps = this.statementQueryById;
-        ps.setInt(1, id);
-        final ResultSet resultSet = ps.executeQuery();
-        return this.parse(resultSet);
-    }
-
-    @NotNull List<ChineseNameApi.ApplicationInfo> queryByName(@NotNull String name) throws SQLException {
-        final PreparedStatement ps = this.statementQueryByName;
-        ps.setString(1, name);
-        final ResultSet resultSet = ps.executeQuery();
-        return this.parse(resultSet);
-    }
-
-    @NotNull List<ChineseNameApi.ApplicationInfo> queryWithLimit(int limit) throws SQLException {
-        final PreparedStatement ps = this.statementQueryWithLimit;
-        ps.setInt(1, limit);
-        final ResultSet resultSet = ps.executeQuery();
-        return this.parse(resultSet);
-    }
-
-    @NotNull List<Integer> insert(@NotNull UUID uuid, @NotNull String name, long time) throws SQLException {
-        final PreparedStatement ps = this.statementInsert;
+    int insert(@NotNull UUID uuid, @NotNull String name, long time) throws SQLException {
+        final PreparedStatement ps = this.getStatementInsert();
         ps.setLong(1, uuid.getMostSignificantBits());
         ps.setLong(2, uuid.getLeastSignificantBits());
         ps.setString(3, name);
@@ -162,19 +190,54 @@ class ApplicationTable {
         return this.parseIds(generatedKeys);
     }
 
+    int deleteById(int id) throws SQLException {
+        final PreparedStatement ps = this.getStatementDeleteById();
+
+        ps.setInt(1, id);
+
+        return ps.executeUpdate();
+    }
+
+
     int updateByUuid(@NotNull UUID uuid, @NotNull String name, long time) throws SQLException {
-        final PreparedStatement ps = this.statementUpdateByUuid;
+        final PreparedStatement ps = this.getStatementUpdateByUuid();
+
         ps.setString(1, name);
         ps.setLong(2, time);
         ps.setLong(3, uuid.getMostSignificantBits());
         ps.setLong(4, uuid.getLeastSignificantBits());
+
         return ps.executeUpdate();
     }
 
-    int deleteById(int id) throws SQLException {
-        final PreparedStatement ps = this.statementDeleteById;
-        ps.setLong(1, id);
-        return ps.executeUpdate();
+    @Nullable ApplicationInfo queryById(int id) throws SQLException {
+        final PreparedStatement ps = this.getStatementQueryById();
+
+        ps.setInt(1, id);
+
+        final ResultSet resultSet = ps.executeQuery();
+
+        return this.parseOne(resultSet);
     }
 
+    @Nullable ApplicationInfo queryByName(@NotNull String name) throws SQLException {
+        final PreparedStatement ps = this.getStatementQueryByName();
+
+        ps.setString(1, name);
+
+        final ResultSet resultSet = ps.executeQuery();
+
+        return this.parseOne(resultSet);
+    }
+
+    @NotNull List<ApplicationInfo> queryWithPage(int limit, int offset) throws SQLException {
+        final PreparedStatement ps = this.getStatementQueryWithPage();
+
+        ps.setInt(1, limit);
+        ps.setInt(2, offset);
+
+        final ResultSet resultSet = ps.executeQuery();
+
+        return this.parseAll(resultSet);
+    }
 }
