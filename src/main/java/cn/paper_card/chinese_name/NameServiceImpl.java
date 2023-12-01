@@ -54,7 +54,6 @@ class NameServiceImpl implements NameService {
     }
 
 
-
     @Override
     public boolean addOrUpdateByUuid(@NotNull NameInfo info) throws SQLException, NameRegisteredException {
         synchronized (this.mySqlConnection) {
@@ -67,7 +66,10 @@ class NameServiceImpl implements NameService {
                 this.mySqlConnection.setLastUseTime();
 
                 if (i != null) {
-                    throw new NameRegisteredException(i, "中文名[%s] 已被注册".formatted(i.name()));
+                    // 检查是不是自己
+                    if (!i.uuid().equals(info.uuid())) {
+                        throw new NameRegisteredException(i, "中文名[%s] 已被注册".formatted(i.name()));
+                    }
                 }
 
                 // 更新
