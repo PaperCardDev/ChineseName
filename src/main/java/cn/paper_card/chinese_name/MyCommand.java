@@ -284,13 +284,13 @@ class MyCommand extends TheMcCommand.HasSub {
                 builder.appendNewline();
                 builder.append(Component.text("[上一页]")
                         .color(NamedTextColor.GRAY).decorate(TextDecoration.UNDERLINED)
-                        .clickEvent(hasPre ? ClickEvent.runCommand("ch-name app-list %d".formatted(pageNo - 1)) : null)
+                        .clickEvent(hasPre ? ClickEvent.runCommand("/ch-name app-list %d".formatted(pageNo - 1)) : null)
                         .hoverEvent(HoverEvent.showText(Component.text(hasPre ? "点击上一页" : "没有上一页啦")))
                 );
                 builder.appendSpace();
                 builder.append(Component.text("[下一页]")
                         .color(NamedTextColor.GRAY).decorate(TextDecoration.UNDERLINED)
-                        .clickEvent(noNext ? null : ClickEvent.runCommand("ch-name app-list %d".formatted(pageNo + 1)))
+                        .clickEvent(noNext ? null : ClickEvent.runCommand("/ch-name app-list %d".formatted(pageNo + 1)))
                         .hoverEvent(HoverEvent.showText(Component.text(noNext ? "没有下一页啦" : "点击下一页")))
                 );
 
