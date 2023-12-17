@@ -94,7 +94,7 @@ class ApplicationTable {
 
         if (this.statementQueryWithPage == null) {
             this.statementQueryWithPage = this.connection.prepareStatement
-                    ("SELECT id, uid1, uid2, name, time FROM %s LIMIT ? OFFSET 0".formatted(NAME));
+                    ("SELECT id, uid1, uid2, name, time FROM %s LIMIT ? OFFSET ?".formatted(NAME));
         }
 
         return this.statementQueryWithPage;
