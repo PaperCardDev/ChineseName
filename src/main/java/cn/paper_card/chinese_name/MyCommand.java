@@ -390,7 +390,12 @@ class MyCommand extends TheMcCommand.HasSub {
                         .append(Component.text(commandSender.getName()).color(NamedTextColor.DARK_RED))
                         .append(Component.text("] 已同意中文名申请 [").color(NamedTextColor.GREEN))
                         .append(Component.text(info.name()).color(NamedTextColor.LIGHT_PURPLE))
-                        .append(Component.text("]，下次连接服务器就生效啦~").color(NamedTextColor.GREEN));
+                        .append(Component.text("]，下次连接服务器就生效啦~").color(NamedTextColor.GREEN))
+                        .appendSpace()
+                        .append(Component.text("[我也要申请]")
+                                .color(NamedTextColor.GRAY).decorate(TextDecoration.UNDERLINED)
+                                .hoverEvent(HoverEvent.showText(Component.text("点击申请")))
+                                .clickEvent(ClickEvent.runCommand("/ch-name help")));
 
                 plugin.broadcast(append.build());
             });
